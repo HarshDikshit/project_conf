@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Document</title>
+    <title>Document</title>
+    <style>
+        .container {
+            display: flex;
+            gap: 20px;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+        }
+
+        .canvas-container {
+            border: 1px solid #ccc;
+            position: relative;
+        }
+
+        canvas {
+            cursor: crosshair;
+        }
+
+        canvas.disabled {
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        button {
+            padding: 8px 16px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+
+        button:hover {
+            background-color: #45a049;
+        }
+
+        #coordinates {
+            width: 300px;
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 10px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="canvas-container">
+            <canvas id="drawingCanvas" width="600" height="400"></canvas>
+        </div>
+        <div class="controls">
+            <button onclick="clearCanvas()">Clear Canvas</button>
+            <button onclick="processCurve()">Get Coordinates</button>
+            <button onclick="sendToESP32()">Initiate Autonomous Mode</button>
+            <div id="coordinates"></div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('drawingCanvas');
+        const ctx = canvas.getContext('2d');
+        const coordinatesDiv = document.getElementById('coordinates');
+        const ESP32_IP = '192.168.1.100'; 
+        
+        let isDrawing = false;
+        let points = [];
+        let origin = null;
+        let canvasLocked = false;
+        
+        // Canvas event listeners
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('mouseup', stopDrawing);
+        canvas.addEventListener('mouseout', stopDrawing);
+
+        function startDrawing(e) {
+            if (canvasLocked) return; 
+            
+            isDrawing = true;
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            origin = [x, y];
+            points = [[0, 0]];
+            
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+        }
+
+        function draw(e) {
+            if (!isDrawing || canvasLocked) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            ctx.lineTo(x, y);
+            ctx.strokeStyle = 'black';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            const normalizedX = x - origin[0];
+            const normalizedY = y - origin[1];
+            const lastPoint = points[points.length - 1];
+            if (Math.abs(lastPoint[0] - normalizedX) > 1 || Math.abs(lastPoint[1] - normalizedY) > 1) {
+                points.push([normalizedX, normalizedY]);
+            }
+        }
+
+        function stopDrawing() {
+            if (isDrawing) {
+                isDrawing = false;
+                ctx.closePath();
+                canvasLocked = true; 
+                canvas.classList.add('disabled');
+            }
+        }
+
+        function clearCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            points = [];
+            origin = null;
+            canvasLocked = false;
+            canvas.classList.remove('disabled');
+            coordinatesDiv.innerHTML = '';
+        }
+
+        function processCurve() {
+            if (points.length < 2) {
+                coordinatesDiv.innerHTML = 'Please draw a curve first!';
+                return;
+            }
+
+            let output = 'Curve Coordinates (Normalized from [0,0]):\n';
+            output += `Starting Point (A): [${points[0][0].toFixed(2)}, ${points[0][1].toFixed(2)}]\n`;
+            output += 'Intermediate Points:\n';
+            for (let i = 1; i < points.length - 1; i++) {
+                output += `[${points[i][0].toFixed(2)}, ${points[i][1].toFixed(2)}]\n`;
+            }
+            output += `Ending Point: [${points[points.length-1][0].toFixed(2)}, ${points[points.length-1][1].toFixed(2)}]`;
+            coordinatesDiv.textContent = output;
+            return points;
+        }
+
+        function generateJSON() {
+            return JSON.stringify({
+                coordinates: points.map(p => ({
+                    x: p[0].toFixed(2),
+                    y: p[1].toFixed(2)
+                }))
+            });
+        }
+
+        function sendToESP32() {
+            if (points.length < 2) {
+                alert('Please draw a curve first!');
+                return;
+            }
+
+            const url = `http://${ESP32_IP}/coordinates`;
+            const data = generateJSON();
+
+            fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: data
+            })
+            .then(response => {
+                if (!response.ok) throw new Error('Network response was not ok');
+                return response.text();
+            })
+            .then(text => {
+                alert(`JSON data sent successfully to ESP32! Response: ${text}`);
+            })
+            .catch(error => {
+                alert(`Error sending data to ESP32: ${error.message}`);
+            });
+        }
+    </script>
+</body>
+</html>
