@@ -1,39 +1,90 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Document</title>
-    <title>Document</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drone Control Interface</title>
     <style>
-        .container {
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            touch-action: none; /* Prevents default touch behaviors */
+        }
+
+        /* Toggle Button */
+        #toggle-mode {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            padding: 10px 20px;
+            background-color: #ff9800;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        #toggle-mode:hover {
+            background-color: #e68a00;
+        }
+
+        /* Manual Section Styles */
+        #manual-section {
+            text-align: center;
+            margin: 50px;
+            display: none; /* Hidden by default */
+        }
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            max-width: 500px;
+            margin: 0 auto;
+        }
+        .btn-man {
+            padding: 15px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            user-select: none;
+            touch-action: manipulation;
+        }
+        .btn-man:active {
+            background-color: #0056b3;
+            transform: scale(0.95);
+        }
+        .btn-man:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        /* Autonomous Section Styles */
+        #autonomous-section {
             display: flex;
             gap: 20px;
             padding: 20px;
-            font-family: Arial, sans-serif;
+            display: block; /* Visible by default */
         }
-
         .canvas-container {
             border: 1px solid #ccc;
             position: relative;
         }
-
         canvas {
             cursor: crosshair;
         }
-
         canvas.disabled {
             cursor: not-allowed;
             opacity: 0.5;
         }
-
-        .controls {
+        .auto-controls {
             display: flex;
             flex-direction: column;
             gap: 10px;
         }
-
-        button {
+        .btn-auto {
             padding: 8px 16px;
             cursor: pointer;
             background-color: #4CAF50;
@@ -41,11 +92,9 @@
             border: none;
             border-radius: 4px;
         }
-
-        button:hover {
+        .btn-auto:hover {
             background-color: #45a049;
         }
-
         #coordinates {
             width: 300px;
             height: 400px;
@@ -57,61 +106,141 @@
     </style>
 </head>
 <body>
-    <div class="container">
+    <button id="toggle-mode" onclick="toggleMode()">Switch to Manual Mode</button>
+
+    <!-- Manual Section -->
+    <div id="manual-section">
+        <h2>Manual Drone Control</h2>
+        <div class="controls">
+            <button class="btn-man" data-command="takeoff">Take Off</button>
+            <button class="btn-man" data-command="forward">Forward</button>
+            <button class="btn-man" data-command="landing">Landing</button>
+            <button class="btn-man" data-command="left">Left</button>
+            <button class="btn-man" data-command="up">Up</button>
+            <button class="btn-man" data-command="right">Right</button>
+            <button class="btn-man" data-command="down">Down</button>
+            <button class="btn-man" data-command="backward">Backward</button>
+        </div>
+    </div>
+
+    <!-- Autonomous Section -->
+    <div id="autonomous-section">
         <div class="canvas-container">
             <canvas id="drawingCanvas" width="600" height="400"></canvas>
         </div>
-        <div class="controls">
-            <button onclick="clearCanvas()">Clear Canvas</button>
-            <button onclick="processCurve()">Get Coordinates</button>
-            <button onclick="sendToESP32()">Initiate Autonomous Mode</button>
+        <div class="auto-controls">
+            <h2>Autonomous Drone Control</h2>
+            <button class="btn-auto" onclick="clearCanvas()">Clear Canvas</button>
+            <button class="btn-auto" onclick="processCurve()">Get Coordinates</button>
+            <button class="btn-auto" onclick="sendToESP32()">Initiate Autonomous Mode</button>
             <div id="coordinates"></div>
         </div>
     </div>
 
     <script>
+        // Common Configuration
+        const ESP32_IP = '192.168.1.100';
+        const config = {
+            manualEndpoint: `http://${ESP32_IP}`,
+            autonomousEndpoint: `http://${ESP32_IP}/coordinates`,
+            updateInterval: 100
+        };
+
+        // Mode Toggle
+        const manualSection = document.getElementById('manual-section');
+        const autonomousSection = document.getElementById('autonomous-section');
+        const toggleButton = document.getElementById('toggle-mode');
+        let isManualMode = false;
+
+        function toggleMode() {
+            isManualMode = !isManualMode;
+            manualSection.style.display = isManualMode ? 'block' : 'none';
+            autonomousSection.style.display = isManualMode ? 'none' : 'block';
+            toggleButton.textContent = isManualMode ? 'Switch to Autonomous Mode' : 'Switch to Manual Mode';
+        }
+
+        // Manual Mode Logic
+        const buttons = document.querySelectorAll('.btn-man');
+        let activeCommand = null;
+        let commandInterval = null;
+
+        function sendManualCommand(command, isStop = false) {
+            const action = isStop ? 'stop' : command;
+            fetch(`${config.manualEndpoint}/${action}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ command: action })
+            })
+            .then(response => response.text())
+            .then(text => console.log(`Response [${action}]: ${text}`))
+            .catch(error => console.error(`Error sending ${action}:`, error));
+        }
+
+        function startCommand(command) {
+            if (activeCommand || !isManualMode) return;
+            activeCommand = command;
+            buttons.forEach(btn => btn.disabled = (btn.dataset.command !== command));
+            sendManualCommand(command);
+            commandInterval = setInterval(() => sendManualCommand(command), config.updateInterval);
+        }
+
+        function stopCommand() {
+            if (!activeCommand) return;
+            clearInterval(commandInterval);
+            sendManualCommand(activeCommand, true);
+            activeCommand = null;
+            buttons.forEach(btn => btn.disabled = false);
+        }
+
+        buttons.forEach(button => {
+            const command = button.dataset.command;
+            button.addEventListener('mousedown', () => startCommand(command));
+            button.addEventListener('mouseup', stopCommand);
+            button.addEventListener('mouseleave', stopCommand);
+            button.addEventListener('touchstart', (e) => { e.preventDefault(); startCommand(command); });
+            button.addEventListener('touchend', (e) => { e.preventDefault(); stopCommand(); });
+            button.addEventListener('touchcancel', stopCommand);
+        });
+
+        document.body.addEventListener('touchmove', (e) => {
+            if (activeCommand) e.preventDefault();
+        }, { passive: false });
+
+        // Autonomous Mode Logic
         const canvas = document.getElementById('drawingCanvas');
         const ctx = canvas.getContext('2d');
         const coordinatesDiv = document.getElementById('coordinates');
-        const ESP32_IP = '192.168.1.100'; 
-        
         let isDrawing = false;
         let points = [];
         let origin = null;
         let canvasLocked = false;
-        
-        // Canvas event listeners
+
         canvas.addEventListener('mousedown', startDrawing);
         canvas.addEventListener('mousemove', draw);
         canvas.addEventListener('mouseup', stopDrawing);
         canvas.addEventListener('mouseout', stopDrawing);
 
         function startDrawing(e) {
-            if (canvasLocked) return; 
-            
+            if (canvasLocked || isManualMode) return;
             isDrawing = true;
             const rect = canvas.getBoundingClientRect();
             const x = e.clientX - rect.left;
             const y = e.clientY - rect.top;
             origin = [x, y];
             points = [[0, 0]];
-            
             ctx.beginPath();
             ctx.moveTo(x, y);
         }
 
         function draw(e) {
-            if (!isDrawing || canvasLocked) return;
-
+            if (!isDrawing || canvasLocked || isManualMode) return;
             const rect = canvas.getBoundingClientRect();
             const x = e.clientX - rect.left;
             const y = e.clientY - rect.top;
-
             ctx.lineTo(x, y);
             ctx.strokeStyle = 'black';
             ctx.lineWidth = 2;
             ctx.stroke();
-
             const normalizedX = x - origin[0];
             const normalizedY = y - origin[1];
             const lastPoint = points[points.length - 1];
@@ -124,7 +253,7 @@
             if (isDrawing) {
                 isDrawing = false;
                 ctx.closePath();
-                canvasLocked = true; 
+                canvasLocked = true;
                 canvas.classList.add('disabled');
             }
         }
@@ -143,7 +272,6 @@
                 coordinatesDiv.innerHTML = 'Please draw a curve first!';
                 return;
             }
-
             let output = 'Curve Coordinates (Normalized from [0,0]):\n';
             output += `Starting Point (A): [${points[0][0].toFixed(2)}, ${points[0][1].toFixed(2)}]\n`;
             output += 'Intermediate Points:\n';
@@ -169,27 +297,17 @@
                 alert('Please draw a curve first!');
                 return;
             }
-
-            const url = `http://${ESP32_IP}/coordinates`;
-            const data = generateJSON();
-
-            fetch(url, {
+            fetch(config.autonomousEndpoint, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: data
+                headers: { 'Content-Type': 'application/json' },
+                body: generateJSON()
             })
             .then(response => {
                 if (!response.ok) throw new Error('Network response was not ok');
                 return response.text();
             })
-            .then(text => {
-                alert(`JSON data sent successfully to ESP32! Response: ${text}`);
-            })
-            .catch(error => {
-                alert(`Error sending data to ESP32: ${error.message}`);
-            });
+            .then(text => alert(`JSON data sent successfully to ESP32! Response: ${text}`))
+            .catch(error => alert(`Error sending data to ESP32: ${error.message}`));
         }
     </script>
 </body>
