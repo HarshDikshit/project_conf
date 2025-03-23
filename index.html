@@ -10,6 +10,10 @@
             margin: 0;
             padding: 20px;
             touch-action: none; /* Prevents default touch behaviors */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
         }
 
         /* Toggle Button */
@@ -23,6 +27,7 @@
             border: none;
             border-radius: 5px;
             cursor: pointer;
+            z-index: 10;
         }
         #toggle-mode:hover {
             background-color: #e68a00;
@@ -31,8 +36,9 @@
         /* Manual Section Styles */
         #manual-section {
             text-align: center;
-            margin: 50px;
+            margin: 50px auto;
             display: none; /* Hidden by default */
+            max-width: 600px;
         }
         .controls {
             display: grid;
@@ -65,25 +71,36 @@
         /* Autonomous Section Styles */
         #autonomous-section {
             display: flex;
+            flex-direction: column;
+            align-items: center;
             gap: 20px;
             padding: 20px;
+            max-width: 900px;
+            width: 100%;
             display: block; /* Visible by default */
         }
         .canvas-container {
             border: 1px solid #ccc;
             position: relative;
+            margin: 0 auto;
+            width: 600px; /* Fixed width */
+            height: 400px; /* Fixed height */
         }
         canvas {
-            cursor: crosshair;
+            cursor: crosshair !important; /* Ensure crosshair is always visible */
+            width: 100%;
+            height: 100%;
         }
         canvas.disabled {
-            cursor: not-allowed;
+            cursor: not-allowed !important;
             opacity: 0.5;
         }
         .auto-controls {
             display: flex;
             flex-direction: column;
             gap: 10px;
+            width: 300px;
+            margin: 0 auto;
         }
         .btn-auto {
             padding: 8px 16px;
@@ -97,8 +114,8 @@
             background-color: #45a049;
         }
         #coordinates {
-            width: 300px;
-            height: 400px;
+            width: 100%;
+            height: 200px;
             overflow-y: auto;
             border: 1px solid #ccc;
             padding: 10px;
@@ -126,11 +143,11 @@
 
     <!-- Autonomous Section -->
     <div id="autonomous-section">
+        <h2>Autonomous Drone Control</h2>
         <div class="canvas-container">
             <canvas id="drawingCanvas" width="600" height="400"></canvas>
         </div>
         <div class="auto-controls">
-            <h2>Autonomous Drone Control</h2>
             <button class="btn-auto" onclick="clearCanvas()">Clear Canvas</button>
             <button class="btn-auto" onclick="processCurve()">Get Coordinates</button>
             <button class="btn-auto" onclick="sendToESP32()">Initiate Autonomous Mode</button>
@@ -216,10 +233,25 @@
         let origin = null;
         let canvasLocked = false;
 
+        // Mouse Events
         canvas.addEventListener('mousedown', startDrawing);
         canvas.addEventListener('mousemove', draw);
         canvas.addEventListener('mouseup', stopDrawing);
         canvas.addEventListener('mouseout', stopDrawing);
+
+        // Touch Events
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            startDrawing(e.touches[0]);
+        });
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            draw(e.touches[0]);
+        });
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            stopDrawing();
+        });
 
         function startDrawing(e) {
             if (canvasLocked || isManualMode) return;
