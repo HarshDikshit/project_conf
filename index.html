@@ -71,23 +71,21 @@
         /* Autonomous Section Styles */
         #autonomous-section {
             display: flex;
-            flex-direction: column;
-            align-items: center;
             gap: 20px;
             padding: 20px;
             max-width: 900px;
             width: 100%;
             display: block; /* Visible by default */
+            justify-content: center;
         }
         .canvas-container {
             border: 1px solid #ccc;
             position: relative;
-            margin: 0 auto;
-            width: 600px; /* Fixed width */
-            height: 400px; /* Fixed height */
+            width: 600px;
+            height: 400px;
         }
         canvas {
-            cursor: crosshair !important; /* Ensure crosshair is always visible */
+            cursor: crosshair !important;
             width: 100%;
             height: 100%;
         }
@@ -100,7 +98,6 @@
             flex-direction: column;
             gap: 10px;
             width: 300px;
-            margin: 0 auto;
         }
         .btn-auto {
             padding: 8px 16px;
@@ -114,8 +111,15 @@
             background-color: #45a049;
         }
         #coordinates {
-            width: 100%;
+            width: 300px;
             height: 200px;
+            resize: vertical;
+            font-family: monospace;
+            padding: 5px;
+        }
+        #output {
+            width: 300px;
+            height: 150px;
             overflow-y: auto;
             border: 1px solid #ccc;
             padding: 10px;
@@ -150,8 +154,9 @@
         <div class="auto-controls">
             <button class="btn-auto" onclick="clearCanvas()">Clear Canvas</button>
             <button class="btn-auto" onclick="processCurve()">Get Coordinates</button>
-            <button class="btn-auto" onclick="sendToESP32()">Initiate Autonomous Mode</button>
-            <div id="coordinates"></div>
+            <textarea id="coordinates" placeholder='Intermediary points (30 cm apart) will appear here'></textarea>
+            <button class="btn-auto" onclick="sendToESP32()">Send to ESP32</button>
+            <div id="output"></div>
         </div>
     </div>
 
@@ -160,7 +165,7 @@
         const ESP32_IP = '192.168.1.100';
         const config = {
             manualEndpoint: `http://${ESP32_IP}`,
-            autonomousEndpoint: `http://${ESP32_IP}/coordinates`,
+            autonomousEndpoint: `http://${ESP32_IP}/path`,
             updateInterval: 100
         };
 
@@ -173,7 +178,7 @@
         function toggleMode() {
             isManualMode = !isManualMode;
             manualSection.style.display = isManualMode ? 'block' : 'none';
-            autonomousSection.style.display = isManualMode ? 'none' : 'block';
+            autonomousSection.style.display = isManualMode ? 'none' : 'flex';
             toggleButton.textContent = isManualMode ? 'Switch to Autonomous Mode' : 'Switch to Manual Mode';
         }
 
@@ -227,31 +232,23 @@
         // Autonomous Mode Logic
         const canvas = document.getElementById('drawingCanvas');
         const ctx = canvas.getContext('2d');
-        const coordinatesDiv = document.getElementById('coordinates');
+        const coordinatesTextarea = document.getElementById('coordinates');
+        const outputDiv = document.getElementById('output');
         let isDrawing = false;
+        let rawPoints = [];
         let points = [];
         let origin = null;
         let canvasLocked = false;
+        const SCALE = 0.01; // 1 pixel = 1 cm = 0.01 meters
+        const MIN_SEPARATION = 0.3; // 30 cm = 0.3 meters
 
-        // Mouse Events
         canvas.addEventListener('mousedown', startDrawing);
         canvas.addEventListener('mousemove', draw);
         canvas.addEventListener('mouseup', stopDrawing);
         canvas.addEventListener('mouseout', stopDrawing);
-
-        // Touch Events
-        canvas.addEventListener('touchstart', (e) => {
-            e.preventDefault();
-            startDrawing(e.touches[0]);
-        });
-        canvas.addEventListener('touchmove', (e) => {
-            e.preventDefault();
-            draw(e.touches[0]);
-        });
-        canvas.addEventListener('touchend', (e) => {
-            e.preventDefault();
-            stopDrawing();
-        });
+        canvas.addEventListener('touchstart', (e) => { e.preventDefault(); startDrawing(e.touches[0]); });
+        canvas.addEventListener('touchmove', (e) => { e.preventDefault(); draw(e.touches[0]); });
+        canvas.addEventListener('touchend', (e) => { e.preventDefault(); stopDrawing(); });
 
         function startDrawing(e) {
             if (canvasLocked || isManualMode) return;
@@ -260,7 +257,7 @@
             const x = e.clientX - rect.left;
             const y = e.clientY - rect.top;
             origin = [x, y];
-            points = [[0, 0]];
+            rawPoints = [[0, 0]];
             ctx.beginPath();
             ctx.moveTo(x, y);
         }
@@ -276,10 +273,7 @@
             ctx.stroke();
             const normalizedX = x - origin[0];
             const normalizedY = y - origin[1];
-            const lastPoint = points[points.length - 1];
-            if (Math.abs(lastPoint[0] - normalizedX) > 1 || Math.abs(lastPoint[1] - normalizedY) > 1) {
-                points.push([normalizedX, normalizedY]);
-            }
+            rawPoints.push([normalizedX, normalizedY]);
         }
 
         function stopDrawing() {
@@ -293,54 +287,127 @@
 
         function clearCanvas() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
+            rawPoints = [];
             points = [];
             origin = null;
             canvasLocked = false;
             canvas.classList.remove('disabled');
-            coordinatesDiv.innerHTML = '';
+            coordinatesTextarea.value = '';
+            outputDiv.innerHTML = '';
+        }
+
+        function interpolatePoints(rawPoints) {
+            const interpolated = [[0, 0]];
+            let prevX = 0, prevY = 0;
+            let accumulatedDistance = 0;
+
+            for (let i = 1; i < rawPoints.length; i++) {
+                const x = rawPoints[i][0] * SCALE;
+                const y = rawPoints[i][1] * SCALE;
+                const dx = x - prevX;
+                const dy = y - prevY;
+                const segmentDistance = Math.sqrt(dx * dx + dy * dy);
+                accumulatedDistance += segmentDistance;
+
+                while (accumulatedDistance >= MIN_SEPARATION) {
+                    const remainingDistance = accumulatedDistance - MIN_SEPARATION;
+                    const ratio = (segmentDistance - remainingDistance) / segmentDistance;
+                    const newX = prevX + dx * ratio;
+                    const newY = prevY + dy * ratio;
+                    interpolated.push([newX / SCALE, newY / SCALE]);
+                    accumulatedDistance = remainingDistance;
+                    prevX = newX;
+                    prevY = newY;
+                }
+
+                if (accumulatedDistance > 0) {
+                    prevX = x;
+                    prevY = y;
+                }
+            }
+
+            if (accumulatedDistance > 0.15) {
+                interpolated.push([rawPoints[rawPoints.length - 1][0], rawPoints[rawPoints.length - 1][1]]);
+            }
+
+            return interpolated;
+        }
+
+        function drawStraightLines(pointsToDraw) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.beginPath();
+            const startX = origin[0] + pointsToDraw[0][0];
+            const startY = origin[1] + pointsToDraw[0][1];
+            ctx.moveTo(startX, startY);
+
+            for (let i = 1; i < pointsToDraw.length; i++) {
+                const x = origin[0] + pointsToDraw[i][0];
+                const y = origin[1] + pointsToDraw[i][1];
+                ctx.lineTo(x, y);
+            }
+            ctx.strokeStyle = 'red';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            ctx.fillStyle = 'blue';
+            for (let i = 0; i < pointsToDraw.length; i++) {
+                const x = origin[0] + pointsToDraw[i][0];
+                const y = origin[1] + pointsToDraw[i][1];
+                ctx.beginPath();
+                ctx.arc(x, y, 3, 0, 2 * Math.PI);
+                ctx.fill();
+            }
         }
 
         function processCurve() {
-            if (points.length < 2) {
-                coordinatesDiv.innerHTML = 'Please draw a curve first!';
+            if (rawPoints.length < 2) {
+                outputDiv.innerHTML = 'Please draw a curve first!';
                 return;
             }
-            let output = 'Curve Coordinates (Normalized from [0,0]):\n';
-            output += `Starting Point (A): [${points[0][0].toFixed(2)}, ${points[0][1].toFixed(2)}]\n`;
-            output += 'Intermediate Points:\n';
-            for (let i = 1; i < points.length - 1; i++) {
-                output += `[${points[i][0].toFixed(2)}, ${points[i][1].toFixed(2)}]\n`;
+
+            points = interpolatePoints(rawPoints);
+            rawPoints = [];
+
+            drawStraightLines(points);
+
+            let output = 'Drone Path (meters, 30cm separation):\n';
+            output += `Starting Point: [${(points[0][0] * SCALE).toFixed(2)}, ${(points[0][1] * SCALE).toFixed(2)}]\n`;
+            if (points.length > 2) {
+                output += 'Intermediate Points:\n';
+                for (let i = 1; i < points.length - 1; i++) {
+                    output += `[${(points[i][0] * SCALE).toFixed(2)}, ${(points[i][1] * SCALE).toFixed(2)}]\n`;
+                }
             }
-            output += `Ending Point: [${points[points.length-1][0].toFixed(2)}, ${points[points.length-1][1].toFixed(2)}]`;
-            coordinatesDiv.textContent = output;
-            return points;
+            output += `Ending Point: [${(points[points.length-1][0] * SCALE).toFixed(2)}, ${(points[points.length-1][1] * SCALE).toFixed(2)}]`;
+            outputDiv.textContent = output;
+
+            coordinatesTextarea.value = generateJSON();
         }
 
         function generateJSON() {
-            return JSON.stringify({
-                coordinates: points.map(p => ({
-                    x: p[0].toFixed(2),
-                    y: p[1].toFixed(2)
-                }))
-            });
+            const path = points.map(p => ({
+                x: (p[0] * SCALE).toFixed(2),
+                y: (p[1] * SCALE).toFixed(2)
+            }));
+            return JSON.stringify({ scale: SCALE, path: path }, null, 2);
         }
 
         function sendToESP32() {
             if (points.length < 2) {
-                alert('Please draw a curve first!');
+                alert('Please generate a path first!');
                 return;
             }
             fetch(config.autonomousEndpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: generateJSON()
+                body: coordinatesTextarea.value
             })
             .then(response => {
                 if (!response.ok) throw new Error('Network response was not ok');
                 return response.text();
             })
-            .then(text => alert(`JSON data sent successfully to ESP32! Response: ${text}`))
-            .catch(error => alert(`Error sending data to ESP32: ${error.message}`));
+            .then(text => alert(`Path sent to ESP32! Response: ${text}`))
+            .catch(error => alert(`Error: ${error.message}`));
         }
     </script>
 </body>
